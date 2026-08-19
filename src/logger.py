@@ -41,6 +41,9 @@ class Logger:
         for cb in self.listeners:
             cb(line)
 
+    def traffic(self, tick: int, cell: tuple[int, int]) -> None:
+        self.log(f"TRAFFIC: blockage spawned on route at {cell} — intercept and reroute")
+
     def sense(
         self,
         tick: int,
@@ -50,13 +53,7 @@ class Logger:
         """Log sensing information."""
 
         if new_walls:
-            self.log(
-                f"SENSE: pos={pos} | new_walls={new_walls}"
-            )
-        else:
-            self.log(
-                f"SENSE: pos={pos}"
-            )
+            self.log(f"SENSE: pos={pos} | new_walls={new_walls}")
 
     def plan(
         self,

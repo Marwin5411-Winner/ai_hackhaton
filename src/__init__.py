@@ -1,1 +1,1 @@
-"""Autonomous Rescue Bot — Dynamic A* replanning agent."""
+"""Emergency Response Ambulance — Dynamic A* live replanning."""

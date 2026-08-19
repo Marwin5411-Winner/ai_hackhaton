@@ -1,13 +1,14 @@
-"""Sense–plan–act loop on the belief grid (free-space assumption)."""
+"""Ambulance sense–plan–act loop. Replans from the current cell when traffic hits the route."""
 
 from __future__ import annotations
 
 from enum import Enum
 
-from .config import ACTION_NAMES, GOAL, MAX_TICKS, N, START
+from .config import ACTION_NAMES, GOAL, MAX_TICKS, N, SENSOR_R, START
 from .logger import Logger
 from .planner import astar
 from .sensor import scan
+from .traffic import TrafficController
 from .world import GridWorld
 
 
@@ -19,11 +20,19 @@ class Status(str, Enum):
 
 
 class Agent:
-    def __init__(self, world: GridWorld, logger: Logger) -> None:
+    def __init__(
+        self,
+        world: GridWorld,
+        logger: Logger,
+        traffic: TrafficController | None = None,
+    ) -> None:
         self.world = world
         self.log = logger
+        self.traffic = traffic
+        self.radius = SENSOR_R
         self.pos: tuple[int, int] = START
-        self.known_obstacles: set[tuple[int, int]] = set()
+        # City map is known. Live traffic is added when it spawns on the route.
+        self.known_obstacles: set[tuple[int, int]] = set(world.static)
         self.known_free: set[tuple[int, int]] = set()
         self.path: list[tuple[int, int]] = []
         self.path_index = 0
@@ -121,6 +130,14 @@ class Agent:
             self.log.log(f"t={self.tick_id:03d} TIMEOUT")
             return self.status
 
+        spawned = None
+        if self.traffic:
+            spawned = self.traffic.maybe_spawn(self.tick_id, self.remaining_path(), self.pos)
+            if spawned:
+                self.known_obstacles.add(spawned)
+                self.known_free.discard(spawned)
+                self.log.traffic(self.tick_id, spawned)
+
         new_walls = self.sense()
         if self.at_goal():
             self.status = Status.GOAL
@@ -130,8 +147,10 @@ class Agent:
         reason = None
         if not self.path:
             reason = "no_plan"
+        elif spawned:
+            reason = "traffic_on_route"
         elif self.path_blocked():
-            reason = "new_walls" if new_walls else "path_blocked"
+            reason = "traffic_on_route" if new_walls else "path_blocked"
 
         if reason:
             if not self.replan(reason):

@@ -1,11 +1,11 @@
-Emergency Response Ambulance — Dynamic A* Replanning
+# Emergency Response Ambulance
 
-An ambulance agent navigating to a hospital on a partially observable 15×15 city grid, live-rerouting the moment a traffic blockage appears on its planned route — no restart.
+Dynamic A\* live replanning. An ambulance drives to the hospital; traffic jams spawn on the current route; it intercepts the block and reroutes from where it is — it does not restart.
 
-- Course: BCA 301-5 — Artificial Intelligence
-- Track: Track 4 — Emergency Response Ambulance (Unit 2/3 — Dynamic Replanning)
-- Repo: https://github.com/Marwin5411-Winner/ai_hackhaton
-- Demo Video:
+- **Course:** BCA 301 — Artificial Intelligence
+- **Track:** Track 4 — Emergency Response Ambulance (Unit 2/3, Dynamic Replanning)
+- **Repo:** https://github.com/Marwin5411-Winner/ai_hackhaton
+- **Demo Video:** \<link\>
 
 Team (fill before submit): Group ID `10` · 1. `Maria Rachel Manoj 2441631` · 2. `Marvin Roupmong 2441632` · 3. `Meet Garg 2441633`
 
@@ -20,34 +20,37 @@ An emergency ambulance must reach a hospital on a dynamic grid where traffic blo
 Python 3.11+ (stdlib only — Tkinter + `heapq`). No `pip install`.
 
 ```bash
-python3 -m src.main --map demo
-python3 -m src.main --map deadend
-python3 -m src.main --map maze
-python3 -m src.main --map demo --headless   
+python3 -m src.main --map city
+python3 -m src.main --map rush
+python3 -m src.main --map gridlock
+python3 -m src.main --map city --headless
 ```
 
-Deliverable checklist
+Split the window for the 60–90s video: city grid on the left, this terminal on the right.
 
-- [ ] Ambulance visibly moving toward the hospital
-- [ ] A blockage is encountered mid-route (not known in advance)
-- [ ] Live reroute happens automatically — no restart, no manual intervention
-- [ ] Ambulance reaches the hospital
+Watch for: ambulance moving → orange traffic appears on the blue route → `TRAFFIC` then `REPLAN` in the log → new route, still going to **H**.
 
-PEAS 
+## PEAS (short)
 
-|Performance | Hospital reached; route cost; nodes expanded; reroutes; wall-clock; collisions = 0 |
-| Environment| 15×15 city grid, static unknown traffic blockages, partial observability (local traffic sensor, Chebyshev r=2), deterministic, single ambulance |
-|Actuators| `MOVE_UP / DOWN / LEFT / RIGHT` (4-connected road segments, unit cost, one cell per tick) |
-|Sensors| Local traffic scan r=2, GPS odometer (x, y), hospital location register |
+| | |
+|---|---|
+| **Performance** | Hospital reached; path cost; nodes expanded; replans; wall-clock; collisions = 0 |
+| **Environment** | 15×15 city grid, static buildings, **dynamic traffic** that appears on the live route |
+| **Actuators** | `MOVE_UP / DOWN / LEFT / RIGHT` (one cell per tick) |
+| **Sensors** | Route monitor (block on remaining path) + local scan |
 
 Algorithm
 
-The ambulance's belief map of the city starts empty — unscanned roads are assumed clear. After each traffic scan (`SENSE`), if the currently planned route intersects a newly detected blockage, the ambulance replans from its current position (Manhattan heuristic, admissible and consistent) and continues driving on the new route without stopping the simulation. Moves into a detected blockage are rejected before execution, so the ambulance never drives into a wall it already knows about.
-
+1. A\* a path from the depot `(0,0)` to the hospital `(14,14)` around known buildings.
+2. Drive along that path.
+3. At scripted ticks, a traffic jam spawns **on the remaining route**.
+4. Intercept → replan A\* from the **current cell** (not from the start).
+5. Keep driving. Repeat if another jam hits.
 
 ## Maps
 
 | Name | Why it exists |
-| `demo` | Blockage sits across every shortest route — guaranteed reroute |
-| `deadend` | Dead-end detour on the greedy route, then a late blockage |
-| `maze` | Longer route, useful if `demo` finishes too fast for the video |
+|---|---|
+| `city` | Open streets, two jams — default video map |
+| `rush` | Tighter corridor; a jam seals the greedy street |
+| `gridlock` | Denser blocks; longer camera run |

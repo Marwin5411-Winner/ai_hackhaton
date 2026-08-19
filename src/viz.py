@@ -1,8 +1,4 @@
-"""Tkinter grid + live mission log. Fog of war: unknown cells stay hidden until sensed.
-
-Same public interface as before — RescueViz(world, agent).run() — so nothing
-else in the project needs to change.
-"""
+"""Tkinter city grid + live dispatch log for the ambulance."""
 
 from __future__ import annotations
 
@@ -12,8 +8,6 @@ import tkinter.font as tkfont
 from .agent import Agent, Status
 from .config import CELL_PX, GOAL, LOG_WIDTH, N, START, TICK_MS
 from .world import GridWorld
-
-DEFAULT_SENSOR_RADIUS = 2   # fallback only; real radius is read from agent.radius
 
 # ---------------------------------------------------------------------------
 # Design tokens
@@ -28,13 +22,14 @@ ACCENT = "#3fa9f5"
 
 COLOR = {
     "fog": "#232b3a",
-    "free": "#c9d6e3",
-    "wall": "#05070a",
-    "path": "#3fa9f5",
+    "free": "#3a4254",
+    "wall": "#1c2330",
+    "traffic": "#f97316",
+    "path": "#38bdf8",
     "sensor": "#7dd3fc",
     "start": "#34d399",
-    "agent": "#ff6b57",
-    "goal": "#fbbf24",
+    "agent": "#e11d48",
+    "goal": "#22c55e",
 }
 
 TEXT_PRIMARY = "#e7edf5"
@@ -50,12 +45,15 @@ class StatusStyle:
 
     COLOR_BY_NAME = {
         "RUNNING": "#34d399",
+        "GOAL": "#22c55e",
         "REACHED": "#fbbf24",
         "GOAL_REACHED": "#fbbf24",
         "DONE": "#fbbf24",
         "SUCCESS": "#fbbf24",
         "FINISHED": "#fbbf24",
         "COMPLETE": "#fbbf24",
+        "UNREACHABLE": "#ff6b57",
+        "TIMEOUT": "#ff6b57",
         "STUCK": "#ff6b57",
         "FAILED": "#ff6b57",
         "NO_PATH": "#ff6b57",
@@ -98,7 +96,7 @@ class RescueViz:
         self.agent = agent
 
         self.root = tk.Tk()
-        self.root.title("Rescue Bot — Dynamic A* Replanning")
+        self.root.title("Ambulance — Dynamic A* Live Replanning")
         self.root.configure(bg=BG)
         self.root.resizable(False, False)
 
@@ -138,12 +136,11 @@ class RescueViz:
         title_box = tk.Frame(header, bg=PANEL)
         title_box.grid(row=0, column=0, sticky="w", padx=16, pady=12)
         tk.Label(
-            title_box, text="RESCUE BOT", fg=TEXT_PRIMARY, bg=PANEL, font=self.font_title
+            title_box, text="AMBULANCE DISPATCH", fg=TEXT_PRIMARY, bg=PANEL, font=self.font_title
         ).pack(anchor="w")
-        radius = getattr(self.agent, "radius", DEFAULT_SENSOR_RADIUS)
         tk.Label(
             title_box,
-            text=f"Dynamic A* replanning  ·  {N}x{N} grid  ·  sensor r={radius}",
+            text=f"Track 4  ·  {N}×{N} city  ·  live traffic  ·  Dynamic A*",
             fg=TEXT_SECONDARY,
             bg=PANEL,
             font=self.font_subtitle,
@@ -219,6 +216,7 @@ class RescueViz:
 
         # color-code event types so the log reads at a glance
         self.log_box.tag_configure("sense", foreground=COLOR["sensor"])
+        self.log_box.tag_configure("traffic", foreground=COLOR["traffic"])
         self.log_box.tag_configure("replan", foreground=COLOR["goal"])
         self.log_box.tag_configure("plan", foreground=COLOR["start"])
         self.log_box.tag_configure("metrics", foreground=TEXT_SECONDARY)
@@ -229,10 +227,10 @@ class RescueViz:
         legend_frame = tk.Frame(side, bg=BG)
         legend_frame.pack(fill="x", pady=(4, 0))
         legend_items = [
-            ("fog", "unseen"), ("free", "explored"),
-            ("wall", "obstacle"), ("path", "planned path"),
-            ("sensor", "sensor radius"), ("start", "start"),
-            ("agent", "agent"), ("goal", "goal"),
+            ("free", "road"), ("wall", "building"),
+            ("traffic", "traffic jam"), ("path", "route"),
+            ("start", "depot"), ("agent", "ambulance"),
+            ("goal", "hospital"),
         ]
         for i, (key, label) in enumerate(legend_items):
             row, col = divmod(i, 2)
@@ -240,17 +238,16 @@ class RescueViz:
             item.grid(row=row, column=col, sticky="w", padx=(0, 14), pady=2)
             swatch = tk.Canvas(item, width=10, height=10, bg=BG, highlightthickness=0)
             swatch.pack(side="left", padx=(0, 6))
-            if key == "sensor":
-                swatch.create_rectangle(1, 1, 9, 9, outline=COLOR["sensor"], width=2)
-            else:
-                swatch.create_rectangle(1, 1, 9, 9, fill=COLOR[key], outline="")
+            swatch.create_rectangle(1, 1, 9, 9, fill=COLOR[key], outline="")
             tk.Label(item, text=label, fg=TEXT_SECONDARY, bg=BG, font=self.font_legend).pack(side="left")
 
     # -- log --------------------------------------------------------------------
 
     def _on_log(self, line: str) -> None:
         first_line = line.split("\n", 1)[0]
-        if "REPLAN" in first_line:
+        if "TRAFFIC" in first_line:
+            tag = "traffic"
+        elif "REPLAN" in first_line:
             tag = "replan"
         elif "PLAN" in first_line:
             tag = "plan"
@@ -276,14 +273,14 @@ class RescueViz:
             return COLOR["goal"]
         if cell == START:
             return COLOR["start"]
+        if cell in self.world.dynamic:
+            return COLOR["traffic"]
         remaining = set(agent.remaining_path()[1:])
-        if cell in remaining and cell not in agent.known_obstacles:
+        if cell in remaining and cell not in self.world.obstacles:
             return COLOR["path"]
-        if cell in agent.known_obstacles:
+        if cell in self.world.static:
             return COLOR["wall"]
-        if cell in agent.known_free:
-            return COLOR["free"]
-        return COLOR["fog"]
+        return COLOR["free"]
 
     def _draw_ticks(self) -> None:
         step = 5
@@ -293,18 +290,6 @@ class RescueViz:
         for y in range(0, N, step):
             cy = MARGIN_TOP + y * CELL_PX + CELL_PX / 2
             self.canvas.create_text(MARGIN_LEFT / 2, cy, text=str(y), fill=TEXT_MUTED, font=self.font_tick)
-
-    def _draw_sensor_footprint(self) -> None:
-        """Dashed outline showing exactly what the sensor currently covers —
-        makes the partial-observability constraint visible, not just implied.
-        """
-        ax, ay = self.agent.pos
-        r = getattr(self.agent, "radius", DEFAULT_SENSOR_RADIUS)
-        x0 = MARGIN_LEFT + max(0, ax - r) * CELL_PX
-        y0 = MARGIN_TOP + max(0, ay - r) * CELL_PX
-        x1 = MARGIN_LEFT + min(N - 1, ax + r) * CELL_PX + CELL_PX
-        y1 = MARGIN_TOP + min(N - 1, ay + r) * CELL_PX + CELL_PX
-        self.canvas.create_rectangle(x0, y0, x1, y1, outline=COLOR["sensor"], width=2, dash=(4, 3))
 
     def _draw(self) -> None:
         self.canvas.delete("all")
@@ -317,7 +302,11 @@ class RescueViz:
                     x0, y0, x0 + CELL_PX, y0 + CELL_PX,
                     fill=self._cell_color((x, y)), outline=GRID_LINE,
                 )
-        self._draw_sensor_footprint()
+                if (x, y) == GOAL:
+                    self.canvas.create_text(
+                        x0 + CELL_PX / 2, y0 + CELL_PX / 2,
+                        text="H", fill="#052e16", font=self.font_legend,
+                    )
 
         ax, ay = self.agent.pos
         pad = 6

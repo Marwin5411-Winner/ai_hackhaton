@@ -1,53 +1,74 @@
-"""Deterministic 15×15 maps. All are solvable; demo/deadend force visible replans."""
+"""City maps. Static buildings are known; traffic is spawned later on the route."""
+
 from __future__ import annotations
+
 from collections.abc import Callable
+from dataclasses import dataclass
+
 from .config import GOAL, N, START
 
 
-def _clean(obstacles: set[tuple[int, int]]) -> set[tuple[int, int]]:
+@dataclass(frozen=True)
+class Scenario:
+    name: str
+    obstacles: frozenset[tuple[int, int]]
+    spawn_ticks: tuple[int, ...]
+    look_ahead: int
+
+
+def _clean(obstacles: set[tuple[int, int]]) -> frozenset[tuple[int, int]]:
     obstacles.discard(START)
     obstacles.discard(GOAL)
-    return {c for c in obstacles if 0 <= c[0] < N and 0 <= c[1] < N}
+    return frozenset(c for c in obstacles if 0 <= c[0] < N and 0 <= c[1] < N)
 
 
-def demo() -> set[tuple[int, int]]:
-    """Near-full column at x=7. Free-space A* crosses it; first sense-along-path replans."""
-    obs = {(7, y) for y in range(0, 13)}
-    obs |= {(3, 9), (4, 9), (10, 4), (12, 11), (1, 12)}
-    return _clean(obs)
-
-
-def deadend() -> set[tuple[int, int]]:
-    """U-trap on the greedy top corridor, plus a late column so the first plan dies fast."""
+def _blocks(origins: list[tuple[int, int]], w: int = 2, h: int = 2) -> set[tuple[int, int]]:
     obs: set[tuple[int, int]] = set()
-    # Cul-de-sac sitting on y=0 around x=8..10 (outside initial r=2).
-    obs |= {(7, 0), (11, 0), (7, 1), (8, 1), (9, 1), (10, 1), (11, 1)}
-    # Column that every remaining route must discover later.
-    obs |= {(6, y) for y in range(0, 12)}
-    return _clean(obs)
+    for bx, by in origins:
+        for dx in range(w):
+            for dy in range(h):
+                obs.add((bx + dx, by + dy))
+    return obs
 
 
-def maze() -> set[tuple[int, int]]:
-    """Alternating horizontal bars. Longer video; still 4-connected solvable."""
+def city() -> Scenario:
+    """Open streets. Two traffic hits on the first A* route — the video map."""
+    obs = _blocks([(2, 2), (2, 8), (2, 12), (8, 2), (8, 10), (11, 5), (11, 12)])
+    return Scenario("city", _clean(obs), spawn_ticks=(5, 14), look_ahead=5)
+
+
+def rush() -> Scenario:
+    """Tighter corridor. One jam seals the greedy street and forces a detour."""
+    obs = _blocks([(3, 1), (3, 5), (3, 9), (7, 3), (7, 8), (10, 1), (10, 10)])
+    obs |= {(6, y) for y in range(0, 10)}
+    return Scenario("rush", _clean(obs), spawn_ticks=(4, 12), look_ahead=4)
+
+
+def gridlock() -> Scenario:
+    """Denser blocks. Longer run if the city demo feels too short on camera."""
     obs: set[tuple[int, int]] = set()
     for i, y in enumerate(range(2, 14, 3)):
         gap = 1 if i % 2 == 0 else N - 2
+        skip = {gap, gap + 1 if gap == 1 else gap - 1}
         for x in range(N):
-            if x not in (gap, gap + 1 if gap == 1 else gap - 1):
+            if x not in skip:
                 obs.add((x, y))
-    return _clean(obs)
+    return Scenario("gridlock", _clean(obs), spawn_ticks=(6, 16, 28), look_ahead=4)
 
 
-MAPS: dict[str, Callable[[], set[tuple[int, int]]]] = {
-    "demo": demo,
-    "deadend": deadend,
-    "maze": maze,
+MAPS: dict[str, Callable[[], Scenario]] = {
+    "demo": city,
+    "city": city,
+    "rush": rush,
+    "deadend": rush,
+    "gridlock": gridlock,
+    "maze": gridlock,
 }
 
 
-def load(name: str) -> set[tuple[int, int]]:
+def load(name: str) -> Scenario:
     try:
         return MAPS[name]()
     except KeyError as exc:
-        known = ", ".join(MAPS)
+        known = ", ".join(sorted(MAPS))
         raise SystemExit(f"unknown map {name!r}; choose one of: {known}") from exc

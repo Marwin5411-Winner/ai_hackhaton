@@ -1,4 +1,4 @@
-"""Entry point: python -m src.main --map demo"""
+"""Entry point: python -m src.main --map city"""
 
 from __future__ import annotations
 
@@ -6,18 +6,19 @@ import argparse
 from .agent import Agent, Status, oracle_cost
 from .logger import Logger
 from .maps import MAPS, load
+from .traffic import TrafficController
 from .world import GridWorld
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Autonomous Rescue Bot — Dynamic A* on a partially observable grid"
+        description="Emergency Response Ambulance — Dynamic A* live replanning"
     )
     parser.add_argument(
         "--map",
-        default="demo",
+        default="city",
         choices=sorted(MAPS),
-        help="deterministic map (default: demo)",
+        help="city map (default: city)",
     )
     parser.add_argument(
         "--headless",
@@ -36,13 +37,19 @@ def run_headless(agent: Agent, world: GridWorld) -> Status:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    world = GridWorld(load(args.map))
+    scenario = load(args.map)
+    world = GridWorld(set(scenario.obstacles))
     logger = Logger()
     logger.log(
-        f"Rescue Bot  map={args.map}  start={world.start}  goal={world.goal}  "
-        f"obstacles={len(world.obstacles)}"
+        f"Ambulance  map={scenario.name}  depot={world.start}  hospital={world.goal}  "
+        f"buildings={len(world.static)}  traffic_ticks={scenario.spawn_ticks}"
     )
-    agent = Agent(world, logger)
+    traffic = TrafficController(
+        world,
+        spawn_ticks=scenario.spawn_ticks,
+        look_ahead=scenario.look_ahead,
+    )
+    agent = Agent(world, logger, traffic=traffic)
     if args.headless:
         status = run_headless(agent, world)
         return 0 if status is Status.GOAL else 1

@@ -16,9 +16,21 @@ class GridWorld:
         self.n = n
         self.start = start
         self.goal = goal
-        self.obstacles = set(obstacles)
-        self.obstacles.discard(start)
-        self.obstacles.discard(goal)
+        self.static = set(obstacles)
+        self.static.discard(start)
+        self.static.discard(goal)
+        self.dynamic: set[tuple[int, int]] = set()
+        self.obstacles = set(self.static)
+
+    def spawn(self, cell: tuple[int, int]) -> bool:
+        """Drop a live traffic blockage. Never covers the depot or the hospital."""
+        if cell in (self.start, self.goal) or not self.in_bounds(*cell):
+            return False
+        if cell in self.obstacles:
+            return False
+        self.dynamic.add(cell)
+        self.obstacles.add(cell)
+        return True
 
     def in_bounds(self, x: int, y: int) -> bool:
         return 0 <= x < self.n and 0 <= y < self.n
