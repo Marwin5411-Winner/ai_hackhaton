@@ -7,7 +7,7 @@ Dynamic A\* replanning agent on a partially observable 15×15 grid.
 - **Repo:** https://github.com/Marwin5411-Winner/ai_hackhaton
 - **Demo Video:** \<link\>
 
-Team (fill before submit): Group ID `\<GROUP ID\>` · 1. `\<Name\> (\<Reg No\>)` · 2. `\<Name\> (\<Reg No\>)` · 3. `\<Name\> (\<Reg No\>)`
+Team (fill before submit): Group ID `10` · 1. `Maria Rachel Manoj 2441631` · 2. `Marvin Roupmong 2441632` · 3. `Meet Garg 2441633`
 
 All three members must have visible commits on this repository.
 
