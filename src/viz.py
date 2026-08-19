@@ -1,106 +1,273 @@
-"""Tkinter grid + live log. Fog of war: unknown cells stay hidden until sensed."""
+"""Tkinter grid + live mission log. Fog of war: unknown cells stay hidden until sensed.
+
+Same public interface as before — RescueViz(world, agent).run() — so nothing
+else in the project needs to change.
+"""
 
 from __future__ import annotations
 
 import tkinter as tk
+import tkinter.font as tkfont
 
 from .agent import Agent, Status
 from .config import CELL_PX, GOAL, LOG_WIDTH, N, START, TICK_MS
 from .world import GridWorld
 
+DEFAULT_SENSOR_RADIUS = 2   # fallback only; real radius is read from agent.radius
+
+# ---------------------------------------------------------------------------
+# Design tokens
+# ---------------------------------------------------------------------------
+
+BG = "#0b0e14"           # window background
+PANEL = "#12161f"          # header / stat cards
+PANEL_ALT = "#161c28"       # canvas + log background
+BORDER = "#232b3a"
+GRID_LINE = "#1b2230"
+ACCENT = "#3fa9f5"
+
 COLOR = {
-    "bg": "#1b1f2a",
-    "fog": "#3a4254",
-    "free": "#d9e4f2",
-    "wall": "#12151c",
-    "path": "#5dade2",
-    "agent": "#e74c3c",
-    "start": "#27ae60",
-    "goal": "#f4d03f",
-    "grid": "#2c3344",
-    "text": "#e8eef5",
+    "fog": "#232b3a",
+    "free": "#c9d6e3",
+    "wall": "#05070a",
+    "path": "#3fa9f5",
+    "sensor": "#7dd3fc",
+    "start": "#34d399",
+    "agent": "#ff6b57",
+    "goal": "#fbbf24",
 }
+
+TEXT_PRIMARY = "#e7edf5"
+TEXT_SECONDARY = "#8b96ab"
+TEXT_MUTED = "#5b6478"
+
+class StatusStyle:
+    """Resolves a display color and label for agent.status without needing
+    to know the exact member names of the real Status enum (which may not
+    match RUNNING/REACHED/STUCK exactly). Looked up by enum member *name*,
+    so it works whether the real enum calls it REACHED, DONE, SUCCESS, etc.
+    """
+
+    COLOR_BY_NAME = {
+        "RUNNING": "#34d399",
+        "REACHED": "#fbbf24",
+        "GOAL_REACHED": "#fbbf24",
+        "DONE": "#fbbf24",
+        "SUCCESS": "#fbbf24",
+        "FINISHED": "#fbbf24",
+        "COMPLETE": "#fbbf24",
+        "STUCK": "#ff6b57",
+        "FAILED": "#ff6b57",
+        "NO_PATH": "#ff6b57",
+        "BLOCKED": "#ff6b57",
+        "ERROR": "#ff6b57",
+    }
+    DEFAULT_COLOR = "#8b96ab"
+
+    @classmethod
+    def color(cls, status) -> str:
+        name = getattr(status, "name", str(status)).upper()
+        return cls.COLOR_BY_NAME.get(name, cls.DEFAULT_COLOR)
+
+    @classmethod
+    def label(cls, status) -> str:
+        value = getattr(status, "value", None)
+        if isinstance(value, str) and value:
+            return value.upper()
+        return getattr(status, "name", str(status)).upper()
+
+MARGIN_LEFT = 26   # room for row-index ticks
+MARGIN_TOP = 22     # room for column-index ticks
+
+
+def _pick_font(root: tk.Misc, preferred: list[str], fallback: str) -> str:
+    """Cross-platform monospace: use whichever preferred family is actually
+    installed, so the UI doesn't silently fall back to a mismatched default
+    font on a teammate's Windows/Linux machine.
+    """
+    available = set(tkfont.families(root))
+    for name in preferred:
+        if name in available:
+            return name
+    return fallback
 
 
 class RescueViz:
     def __init__(self, world: GridWorld, agent: Agent) -> None:
         self.world = world
         self.agent = agent
+
         self.root = tk.Tk()
-        self.root.title("Autonomous Rescue Bot — Dynamic A*")
-        self.root.configure(bg=COLOR["bg"])
+        self.root.title("Rescue Bot — Dynamic A* Replanning")
+        self.root.configure(bg=BG)
+        self.root.resizable(False, False)
 
-        board = N * CELL_PX
-        self.canvas = tk.Canvas(
+        mono = _pick_font(
             self.root,
-            width=board,
-            height=board,
-            bg=COLOR["bg"],
-            highlightthickness=0,
+            ["JetBrains Mono", "Cascadia Code", "SF Mono", "Consolas", "Menlo"],
+            "Courier",
         )
-        self.canvas.grid(row=0, column=0, padx=12, pady=12, sticky="nw")
+        self.font_mono = mono
+        self.font_title = (mono, 15, "bold")
+        self.font_subtitle = (mono, 10)
+        self.font_section = (mono, 11, "bold")
+        self.font_log = (mono, 10)
+        self.font_stat_label = (mono, 9)
+        self.font_stat_value = (mono, 17, "bold")
+        self.font_legend = (mono, 9)
+        self.font_tick = (mono, 8)
 
-        side = tk.Frame(self.root, bg=COLOR["bg"])
-        side.grid(row=0, column=1, padx=(0, 12), pady=12, sticky="nsew")
-        self.root.columnconfigure(1, weight=1)
-
-        tk.Label(
-            side,
-            text="Decision log",
-            fg=COLOR["text"],
-            bg=COLOR["bg"],
-            font=("Menlo", 13, "bold"),
-            anchor="w",
-        ).pack(fill="x")
-
-        self.log_box = tk.Text(
-            side,
-            width=LOG_WIDTH,
-            height=28,
-            bg="#10141c",
-            fg="#b8f0c8",
-            insertbackground=COLOR["text"],
-            font=("Menlo", 11),
-            wrap="word",
-            state="disabled",
-        )
-        self.log_box.pack(fill="both", expand=True, pady=(6, 8))
-
-        self.status_var = tk.StringVar(value="status: running")
-        tk.Label(
-            side,
-            textvariable=self.status_var,
-            fg=COLOR["text"],
-            bg=COLOR["bg"],
-            font=("Menlo", 12),
-            anchor="w",
-            justify="left",
-        ).pack(fill="x")
-
-        legend = (
-            "fog  free  wall  path  agent  goal\n"
-            "Track 2 · 15×15 · r=2 Chebyshev · A* Manhattan"
-        )
-        tk.Label(
-            side,
-            text=legend,
-            fg="#9aa7bd",
-            bg=COLOR["bg"],
-            font=("Menlo", 10),
-            anchor="w",
-            justify="left",
-        ).pack(fill="x", pady=(8, 0))
+        self._build_header()
+        self._build_canvas()
+        self._build_sidebar()
 
         agent.log.listeners.append(self._on_log)
         for line in agent.log.lines:
             self._on_log(line)
+
         self._draw()
+        self._update_status()
+
+    # -- layout ---------------------------------------------------------------
+
+    def _build_header(self) -> None:
+        header = tk.Frame(self.root, bg=PANEL, height=56)
+        header.grid(row=0, column=0, columnspan=2, sticky="ew")
+        header.grid_propagate(False)
+        header.columnconfigure(0, weight=1)
+
+        title_box = tk.Frame(header, bg=PANEL)
+        title_box.grid(row=0, column=0, sticky="w", padx=16, pady=8)
+        tk.Label(
+            title_box, text="RESCUE BOT", fg=TEXT_PRIMARY, bg=PANEL, font=self.font_title
+        ).pack(anchor="w")
+        radius = getattr(self.agent, "radius", DEFAULT_SENSOR_RADIUS)
+        tk.Label(
+            title_box,
+            text=f"Dynamic A* replanning  ·  {N}x{N} grid  ·  sensor r={radius}",
+            fg=TEXT_SECONDARY,
+            bg=PANEL,
+            font=self.font_subtitle,
+        ).pack(anchor="w")
+
+        status_box = tk.Frame(header, bg=PANEL)
+        status_box.grid(row=0, column=1, sticky="e", padx=16)
+        self.status_dot = tk.Canvas(status_box, width=10, height=10, bg=PANEL, highlightthickness=0)
+        self.status_dot.grid(row=0, column=0, padx=(0, 8))
+        self._status_dot_id = self.status_dot.create_oval(
+            1, 1, 9, 9, fill=StatusStyle.color(Status.RUNNING), outline=""
+        )
+        self.status_text = tk.StringVar(value="RUNNING")
+        tk.Label(
+            status_box, textvariable=self.status_text, fg=TEXT_PRIMARY, bg=PANEL,
+            font=(self.font_mono, 11, "bold"),
+        ).grid(row=0, column=1)
+
+        tk.Frame(self.root, bg=ACCENT, height=2).grid(row=1, column=0, columnspan=2, sticky="ew")
+
+    def _build_canvas(self) -> None:
+        board_w = N * CELL_PX + MARGIN_LEFT
+        board_h = N * CELL_PX + MARGIN_TOP
+
+        wrap = tk.Frame(self.root, bg=PANEL, padx=10, pady=10)
+        wrap.grid(row=2, column=0, sticky="nw", padx=12, pady=12)
+
+        self.canvas = tk.Canvas(
+            wrap, width=board_w, height=board_h, bg=PANEL_ALT,
+            highlightthickness=1, highlightbackground=BORDER,
+        )
+        self.canvas.pack()
+
+    def _build_sidebar(self) -> None:
+        side = tk.Frame(self.root, bg=BG)
+        side.grid(row=2, column=1, sticky="nsew", padx=(0, 12), pady=12)
+        self.root.columnconfigure(1, weight=1)
+
+        # -- live stat cards --
+        stats = tk.Frame(side, bg=BG)
+        stats.pack(fill="x", pady=(0, 10))
+        self.stat_vars = {
+            "steps": tk.StringVar(value="0"),
+            "replans": tk.StringVar(value="0"),
+            "remaining": tk.StringVar(value="-"),
+        }
+        for i, (key, label) in enumerate([("steps", "STEPS"), ("replans", "REPLANS"), ("remaining", "REMAIN")]):
+            card = tk.Frame(stats, bg=PANEL, padx=10, pady=8)
+            card.grid(row=0, column=i, sticky="ew", padx=(0, 6) if i < 2 else 0)
+            stats.columnconfigure(i, weight=1)
+            tk.Label(card, text=label, fg=TEXT_MUTED, bg=PANEL, font=self.font_stat_label).pack(anchor="w")
+            tk.Label(
+                card, textvariable=self.stat_vars[key], fg=TEXT_PRIMARY, bg=PANEL, font=self.font_stat_value
+            ).pack(anchor="w")
+
+        # -- mission log --
+        tk.Label(side, text="MISSION LOG", fg=TEXT_SECONDARY, bg=BG, font=self.font_section).pack(anchor="w")
+
+        log_frame = tk.Frame(side, bg=BORDER)
+        log_frame.pack(fill="both", expand=True, pady=(4, 10))
+
+        scrollbar = tk.Scrollbar(log_frame)
+        scrollbar.pack(side="right", fill="y")
+
+        self.log_box = tk.Text(
+            log_frame, width=LOG_WIDTH, height=22, bg=PANEL_ALT, fg=TEXT_PRIMARY,
+            insertbackground=TEXT_PRIMARY, font=self.font_log, wrap="word",
+            state="disabled", relief="flat", padx=8, pady=6,
+            yscrollcommand=scrollbar.set,
+        )
+        self.log_box.pack(side="left", fill="both", expand=True)
+        scrollbar.config(command=self.log_box.yview)
+
+        # color-code event types so the log reads at a glance
+        self.log_box.tag_configure("sense", foreground=COLOR["sensor"])
+        self.log_box.tag_configure("replan", foreground=COLOR["goal"])
+        self.log_box.tag_configure("plan", foreground=COLOR["start"])
+        self.log_box.tag_configure("metrics", foreground=TEXT_SECONDARY)
+        self.log_box.tag_configure("default", foreground=TEXT_PRIMARY)
+
+        # -- legend --
+        tk.Label(side, text="LEGEND", fg=TEXT_SECONDARY, bg=BG, font=self.font_section).pack(anchor="w")
+        legend_frame = tk.Frame(side, bg=BG)
+        legend_frame.pack(fill="x", pady=(4, 0))
+        legend_items = [
+            ("fog", "unseen"), ("free", "explored"),
+            ("wall", "obstacle"), ("path", "planned path"),
+            ("sensor", "sensor radius"), ("start", "start"),
+            ("agent", "agent"), ("goal", "goal"),
+        ]
+        for i, (key, label) in enumerate(legend_items):
+            row, col = divmod(i, 2)
+            item = tk.Frame(legend_frame, bg=BG)
+            item.grid(row=row, column=col, sticky="w", padx=(0, 14), pady=2)
+            swatch = tk.Canvas(item, width=10, height=10, bg=BG, highlightthickness=0)
+            swatch.pack(side="left", padx=(0, 6))
+            if key == "sensor":
+                swatch.create_rectangle(1, 1, 9, 9, outline=COLOR["sensor"], width=2)
+            else:
+                swatch.create_rectangle(1, 1, 9, 9, fill=COLOR[key], outline="")
+            tk.Label(item, text=label, fg=TEXT_SECONDARY, bg=BG, font=self.font_legend).pack(side="left")
+
+    # -- log --------------------------------------------------------------------
 
     def _on_log(self, line: str) -> None:
+        first_line = line.split("\n", 1)[0]
+        if "REPLAN" in first_line:
+            tag = "replan"
+        elif "PLAN" in first_line:
+            tag = "plan"
+        elif "SENSE" in first_line:
+            tag = "sense"
+        elif "----" in first_line:
+            tag = "metrics"
+        else:
+            tag = "default"
+
         self.log_box.configure(state="normal")
-        self.log_box.insert("end", line + "\n")
+        self.log_box.insert("end", line + "\n", tag)
         self.log_box.see("end")
         self.log_box.configure(state="disabled")
+
+    # -- drawing ------------------------------------------------------------------
 
     def _cell_color(self, cell: tuple[int, int]) -> str:
         agent = self.agent
@@ -119,44 +286,69 @@ class RescueViz:
             return COLOR["free"]
         return COLOR["fog"]
 
+    def _draw_ticks(self) -> None:
+        step = 5
+        for x in range(0, N, step):
+            cx = MARGIN_LEFT + x * CELL_PX + CELL_PX / 2
+            self.canvas.create_text(cx, MARGIN_TOP / 2, text=str(x), fill=TEXT_MUTED, font=self.font_tick)
+        for y in range(0, N, step):
+            cy = MARGIN_TOP + y * CELL_PX + CELL_PX / 2
+            self.canvas.create_text(MARGIN_LEFT / 2, cy, text=str(y), fill=TEXT_MUTED, font=self.font_tick)
+
+    def _draw_sensor_footprint(self) -> None:
+        """Dashed outline showing exactly what the sensor currently covers —
+        makes the partial-observability constraint visible, not just implied.
+        """
+        ax, ay = self.agent.pos
+        r = getattr(self.agent, "radius", DEFAULT_SENSOR_RADIUS)
+        x0 = MARGIN_LEFT + max(0, ax - r) * CELL_PX
+        y0 = MARGIN_TOP + max(0, ay - r) * CELL_PX
+        x1 = MARGIN_LEFT + min(N - 1, ax + r) * CELL_PX + CELL_PX
+        y1 = MARGIN_TOP + min(N - 1, ay + r) * CELL_PX + CELL_PX
+        self.canvas.create_rectangle(x0, y0, x1, y1, outline=COLOR["sensor"], width=2, dash=(4, 3))
+
     def _draw(self) -> None:
         self.canvas.delete("all")
+        self._draw_ticks()
         for y in range(N):
             for x in range(N):
-                x0, y0 = x * CELL_PX, y * CELL_PX
+                x0 = MARGIN_LEFT + x * CELL_PX
+                y0 = MARGIN_TOP + y * CELL_PX
                 self.canvas.create_rectangle(
-                    x0,
-                    y0,
-                    x0 + CELL_PX,
-                    y0 + CELL_PX,
-                    fill=self._cell_color((x, y)),
-                    outline=COLOR["grid"],
+                    x0, y0, x0 + CELL_PX, y0 + CELL_PX,
+                    fill=self._cell_color((x, y)), outline=GRID_LINE,
                 )
-        # agent ring so it stays visible on the path
+        self._draw_sensor_footprint()
+
         ax, ay = self.agent.pos
         pad = 6
+        x0 = MARGIN_LEFT + ax * CELL_PX
+        y0 = MARGIN_TOP + ay * CELL_PX
         self.canvas.create_oval(
-            ax * CELL_PX + pad,
-            ay * CELL_PX + pad,
-            ax * CELL_PX + CELL_PX - pad,
-            ay * CELL_PX + CELL_PX - pad,
-            outline="#ffffff",
-            width=2,
+            x0 + pad, y0 + pad, x0 + CELL_PX - pad, y0 + CELL_PX - pad,
+            outline="#ffffff", width=2,
         )
+
+    # -- status / metrics --------------------------------------------------------
+
+    def _update_status(self) -> None:
+        status = self.agent.status
+        self.status_dot.itemconfig(self._status_dot_id, fill=StatusStyle.color(status))
+        self.status_text.set(StatusStyle.label(status))
+        self.stat_vars["steps"].set(str(self.agent.log.metrics.ticks))
+        self.stat_vars["replans"].set(str(self.agent.log.metrics.replans))
+        remaining = max(0, len(self.agent.remaining_path()) - 1)
+        self.stat_vars["remaining"].set(str(remaining))
 
     def _pulse(self) -> None:
         if self.agent.status is Status.RUNNING:
             self.agent.tick()
             self._draw()
-            self.status_var.set(
-                f"status: {self.agent.status.value}   pos={self.agent.pos}   "
-                f"cost={self.agent.log.metrics.path_cost}   "
-                f"replans={self.agent.log.metrics.replans}"
-            )
+            self._update_status()
             self.root.after(TICK_MS, self._pulse)
             return
         self._draw()
-        self.status_var.set(f"status: {self.agent.status.value}   pos={self.agent.pos}")
+        self._update_status()
         from .agent import oracle_cost
 
         self.agent.log.finalize(oracle_cost(self.world))

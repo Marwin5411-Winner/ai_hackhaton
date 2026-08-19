@@ -1,9 +1,6 @@
 """Deterministic 15×15 maps. All are solvable; demo/deadend force visible replans."""
-
 from __future__ import annotations
-
 from collections.abc import Callable
-
 from .config import GOAL, N, START
 
 
