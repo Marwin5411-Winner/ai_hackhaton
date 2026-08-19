@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-
 from .agent import Agent, Status, oracle_cost
 from .logger import Logger
 from .maps import MAPS, load

@@ -1,4 +1,4 @@
-"""Real-time decision log + end-of-run metrics for SUMMARY.pdf placeholders."""
+# """Real-time decision log + end-of-run metrics for SUMMARY.pdf."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ class Metrics:
 
 
 class Logger:
+
     def __init__(self) -> None:
         self.lines: list[str] = []
         self.metrics = Metrics()
@@ -29,15 +30,33 @@ class Logger:
         self.listeners: list = []
 
     def log(self, message: str) -> None:
-        line = message
+        """Print a timestamped log message."""
+
+        elapsed = time.perf_counter() - self._t0
+        line = f"[t={elapsed:.4f}s] {message}"
+
         self.lines.append(line)
         print(line, flush=True)
+
         for cb in self.listeners:
             cb(line)
 
-    def sense(self, tick: int, pos: tuple[int, int], new_walls: list[tuple[int, int]]) -> None:
-        extra = f"  new_walls={new_walls}" if new_walls else ""
-        self.log(f"t={tick:03d} SENSE  pos={pos}{extra}")
+    def sense(
+        self,
+        tick: int,
+        pos: tuple[int, int],
+        new_walls: list[tuple[int, int]]
+    ) -> None:
+        """Log sensing information."""
+
+        if new_walls:
+            self.log(
+                f"SENSE: pos={pos} | new_walls={new_walls}"
+            )
+        else:
+            self.log(
+                f"SENSE: pos={pos}"
+            )
 
     def plan(
         self,
@@ -50,48 +69,142 @@ class Logger:
         *,
         replan: bool,
     ) -> None:
+        """Log planning/replanning and update metrics."""
+
         if replan:
             self.metrics.replans += 1
+
         self.metrics.nodes_expanded += expanded
-        self.metrics.peak_frontier = max(self.metrics.peak_frontier, frontier)
-        tag = "REPLAN" if replan else "PLAN  "
-        self.log(
-            f"t={tick:03d} {tag} pos={pos} reason={reason} "
-            f"plan_cost={cost} expanded={expanded} frontier={frontier}"
+
+        self.metrics.peak_frontier = max(
+            self.metrics.peak_frontier,
+            frontier
         )
 
-    def step(self, tick: int, action: str, pos: tuple[int, int]) -> None:
+        if replan:
+            self.log(
+                f"REPLAN: {reason} | "
+                f"pos={pos} | "
+                f"{expanded} nodes expanded | "
+                f"frontier={frontier} | "
+                f"new cost={cost}"
+            )
+        else:
+            self.log(
+                f"PLAN: pos={pos} | "
+                f"{expanded} nodes expanded | "
+                f"frontier={frontier} | "
+                f"cost={cost}"
+            )
+
+    def step(
+        self,
+        tick: int,
+        action: str,
+        pos: tuple[int, int]
+    ) -> None:
+        """Log a successful movement."""
+
         self.metrics.path_cost += 1
-        self.log(f"t={tick:03d} STEP   {action} -> {pos}")
 
-    def blocked(self, tick: int, pos: tuple[int, int], target: tuple[int, int]) -> None:
+        self.log(
+            f"STEP: {action} -> {pos}"
+        )
+
+    def blocked(
+        self,
+        tick: int,
+        pos: tuple[int, int],
+        target: tuple[int, int]
+    ) -> None:
+        """Log a blocked movement."""
+
         self.metrics.collisions += 1
-        self.log(f"t={tick:03d} BLOCKED pos={pos} tried={target} (rejected, no collision)")
 
-    def goal(self, tick: int, pos: tuple[int, int]) -> None:
+        self.log(
+            f"BLOCKED: pos={pos} | tried={target}"
+        )
+
+    def goal(
+        self,
+        tick: int,
+        pos: tuple[int, int]
+    ) -> None:
+        """Log goal completion."""
+
         self.metrics.goal_reached = True
-        self.log(f"t={tick:03d} GOAL   reached {pos}")
 
-    def unreachable(self, tick: int, pos: tuple[int, int]) -> None:
+        self.log(
+            f"GOAL: reached {pos}"
+        )
+
+    def unreachable(
+        self,
+        tick: int,
+        pos: tuple[int, int]
+    ) -> None:
+        """Log unreachable state."""
+
         self.metrics.unreachable = True
-        self.log(f"t={tick:03d} UNREACHABLE pos={pos} OPEN empty")
+
+        self.log(
+            f"UNREACHABLE: pos={pos}"
+        )
 
     def finalize(self, oracle_cost: int) -> Metrics:
+        """Calculate final metrics and print summary."""
+
         self.metrics.oracle_cost = oracle_cost
-        self.metrics.wall_clock_s = time.perf_counter() - self._t0
+
+        self.metrics.wall_clock_s = (
+            time.perf_counter() - self._t0
+        )
+
         m = self.metrics
+
         sep = "-" * 52
+
         self.log(sep)
-        self.log("SUMMARY METRICS (paste into SUMMARY.pdf <__> fields)")
-        self.log(f"  goal_reached    = {m.goal_reached}")
-        self.log(f"  path_cost       = {m.path_cost}")
-        self.log(f"  nodes_expanded  = {m.nodes_expanded}")
-        self.log(f"  peak_frontier   = {m.peak_frontier}")
-        self.log(f"  replans         = {m.replans}")
-        self.log(f"  wall_clock_s    = {m.wall_clock_s:.4f}")
-        self.log(f"  oracle_cost     = {m.oracle_cost}")
-        self.log(f"  collisions      = {m.collisions}")
-        self.log(f"  ticks           = {m.ticks}")
+        self.log("FINAL METRICS SUMMARY")
+
+        self.log(
+            f"  goal_reached    = {m.goal_reached}"
+        )
+
+        self.log(
+            f"  path_cost       = {m.path_cost}"
+        )
+
+        self.log(
+            f"  nodes_expanded  = {m.nodes_expanded}"
+        )
+
+        self.log(
+            f"  peak_frontier   = {m.peak_frontier}"
+        )
+
+        self.log(
+            f"  replans         = {m.replans}"
+        )
+
+        self.log(
+            f"  wall_clock_s    = {m.wall_clock_s:.4f}"
+        )
+
+        self.log(
+            f"  oracle_cost     = {m.oracle_cost}"
+        )
+
+        self.log(
+            f"  collisions      = {m.collisions}"
+        )
+
+        self.log(
+            f"  ticks           = {m.ticks}"
+        )
+
         self.log(sep)
+
         sys.stdout.flush()
+
         return m
