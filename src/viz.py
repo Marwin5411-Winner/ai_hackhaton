@@ -131,13 +131,12 @@ class RescueViz:
     # -- layout ---------------------------------------------------------------
 
     def _build_header(self) -> None:
-        header = tk.Frame(self.root, bg=PANEL, height=56)
+        header = tk.Frame(self.root, bg=PANEL)
         header.grid(row=0, column=0, columnspan=2, sticky="ew")
-        header.grid_propagate(False)
         header.columnconfigure(0, weight=1)
 
         title_box = tk.Frame(header, bg=PANEL)
-        title_box.grid(row=0, column=0, sticky="w", padx=16, pady=8)
+        title_box.grid(row=0, column=0, sticky="w", padx=16, pady=12)
         tk.Label(
             title_box, text="RESCUE BOT", fg=TEXT_PRIMARY, bg=PANEL, font=self.font_title
         ).pack(anchor="w")
@@ -148,10 +147,10 @@ class RescueViz:
             fg=TEXT_SECONDARY,
             bg=PANEL,
             font=self.font_subtitle,
-        ).pack(anchor="w")
+        ).pack(anchor="w", pady=(3, 0))
 
         status_box = tk.Frame(header, bg=PANEL)
-        status_box.grid(row=0, column=1, sticky="e", padx=16)
+        status_box.grid(row=0, column=1, sticky="e", padx=16, pady=12)
         self.status_dot = tk.Canvas(status_box, width=10, height=10, bg=PANEL, highlightthickness=0)
         self.status_dot.grid(row=0, column=0, padx=(0, 8))
         self._status_dot_id = self.status_dot.create_oval(
